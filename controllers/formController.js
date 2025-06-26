@@ -21,6 +21,16 @@ const decodeUTF8 = (text) => {
   }
 };
 
+
+
+
+
+
+
+
+
+
+
 // Helper function to clean object with UTF-8 decoding
 const cleanUTF8Object = (obj) => {
   if (typeof obj === 'string') {
@@ -138,17 +148,19 @@ const responses = Object.entries(validFormResponses).map(([questionText, answer]
 
 
 
+
+
+
+// Helper function to decode UTF-8 text
 export const getResponses = async (req, res) => {
   try {
     const { formId, language, mobile } = req.query;
     const query = {};
-    
+
     if (formId) query.formId = formId;
     if (language) {
       if (!['en', 'mr'].includes(language)) {
-        return res.status(400).json({
-          message: 'Invalid language. Must be one of: en, mr.',
-        });
+        return res.status(400).json({ message: 'Invalid language. Must be one of: en, mr.' });
       }
       query.language = language;
     }
@@ -165,22 +177,48 @@ export const getResponses = async (req, res) => {
       .populate('userId')
       .sort({ submittedAt: -1 });
 
-    // Clean UTF-8 in responses before sending
-    const cleanedResponses = responses.map(response => ({
-      ...response.toObject(),
-      responses: response.responses.map(resp => ({
-        ...resp,
-        questionText: decodeUTF8(resp.questionText),
-        answer: decodeUTF8(resp.answer)
-      }))
-    }));
+    // Log raw database response
+    console.log('Raw Database Responses:', JSON.stringify(responses, null, 2));
 
+    const cleanedResponses = responses.map((response) => {
+      const cleaned = {
+        ...response.toObject(),
+        responses: response.responses.map((resp) => ({
+          ...resp,
+          questionText: decodeUTF8(resp.questionText),
+          answer: decodeUTF8(resp.answer),
+        })),
+      };
+      // Log each cleaned response
+      console.log('Cleaned Response:', JSON.stringify(cleaned, null, 2));
+      return cleaned;
+    });
+
+    console.log('Fetched Responses (Final):', JSON.stringify(cleanedResponses, null, 2));
     res.status(200).json(cleanedResponses);
   } catch (error) {
     console.error('Error fetching responses:', error.message, error.stack);
-    res.status(500).json({ message: 'Error fetching responses', error: error.message });
+    res.status(500).json({ 
+      message: language === 'mr' ? 'प्रतिसाद आणताना त्रुटी' : 'Error fetching responses', 
+      error: error.message 
+    });
   }
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 export const deleteResponse = async (req, res) => {
   try {
@@ -190,9 +228,8 @@ export const deleteResponse = async (req, res) => {
       return res.status(404).json({ message: 'Response not found' });
     }
 
-    // Delete associated media files from cloudinary
     for (const resp of response.responses) {
-      if (resp.images && resp.images.length > 0) {
+      if (resp.images?.length > 0) {
         for (const imageUrl of resp.images) {
           try {
             const publicId = imageUrl.split('/').pop().split('.')[0];
@@ -202,13 +239,11 @@ export const deleteResponse = async (req, res) => {
           }
         }
       }
-      if (resp.videos && resp.videos.length > 0) {
+      if (resp.videos?.length > 0) {
         for (const videoUrl of resp.videos) {
           try {
             const publicId = videoUrl.split('/').pop().split('.')[0];
-            await cloudinary.uploader.destroy(`YNK_Survey_Uploads/${publicId}`, {
-              resource_type: 'video',
-            });
+            await cloudinary.uploader.destroy(`YNK_Survey_Uploads/${publicId}`, { resource_type: 'video' });
           } catch (deleteError) {
             console.error('Error deleting video:', deleteError);
           }
@@ -217,6 +252,7 @@ export const deleteResponse = async (req, res) => {
     }
 
     await Response.deleteOne({ _id: id });
+    console.log('Response deleted:', id); // Debug: Log deletion
     res.status(200).json({ message: 'Response deleted successfully' });
   } catch (error) {
     console.error('Error deleting response:', error.message, error.stack);
@@ -232,11 +268,10 @@ export const deleteUser = async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Delete all responses and associated media for this user
     const responses = await Response.find({ userId: id });
     for (const response of responses) {
       for (const resp of response.responses) {
-        if (resp.images && resp.images.length > 0) {
+        if (resp.images?.length > 0) {
           for (const imageUrl of resp.images) {
             try {
               const publicId = imageUrl.split('/').pop().split('.')[0];
@@ -246,13 +281,11 @@ export const deleteUser = async (req, res) => {
             }
           }
         }
-        if (resp.videos && resp.videos.length > 0) {
+        if (resp.videos?.length > 0) {
           for (const videoUrl of resp.videos) {
             try {
               const publicId = videoUrl.split('/').pop().split('.')[0];
-              await cloudinary.uploader.destroy(`YNK_Survey_Uploads/${publicId}`, {
-                resource_type: 'video',
-              });
+              await cloudinary.uploader.destroy(`YNK_Survey_Uploads/${publicId}`, { resource_type: 'video' });
             } catch (deleteError) {
               console.error('Error deleting video:', deleteError);
             }
@@ -263,39 +296,36 @@ export const deleteUser = async (req, res) => {
 
     await Response.deleteMany({ userId: id });
     await User.deleteOne({ _id: id });
+    console.log('User deleted:', id); // Debug: Log deletion
     res.status(200).json({ message: 'User and associated responses deleted successfully' });
   } catch (error) {
     console.error('Error deleting user:', error.message, error.stack);
     res.status(500).json({ message: 'Error deleting user', error: error.message });
   }
 };
-
 export const updateResponse = async (req, res) => {
   try {
     const { id } = req.params;
-    
-    // Clean the request body for UTF-8 issues
     const cleanedBody = cleanUTF8Object(req.body);
     const { responses, language } = cleanedBody;
 
+    console.log('Update Request Body:', cleanedBody); // Debug: Log update request
+
     const response = await Response.findById(id);
     if (!response) {
-      return res.status(404).json({ message: 'प्रतिसाद सापडला नाही' });
+      return res.status(404).json({ message: 'Response not found' });
     }
 
     if (language) {
-      const validLanguages = ['en', 'mr'];
-      if (!validLanguages.includes(language)) {
-        return res.status(400).json({
-          message: 'अवैध भाषा. en किंवा mr असणे आवश्यक आहे.',
-        });
+      if (!['en', 'mr'].includes(language)) {
+        return res.status(400).json({ message: 'Invalid language. Must be one of: en, mr.' });
       }
       response.language = language;
     }
 
     if (responses && Array.isArray(responses)) {
       response.responses = responses.map((resp) => ({
-        questionId: resp.questionId || decodeUTF8(resp.questionText).replace(/\s+/g, "_"),
+        questionId: resp.questionId || decodeUTF8(resp.questionText).replace(/\s+/g, '_'),
         questionText: decodeUTF8(resp.questionText),
         answer: decodeUTF8(resp.answer),
         images: resp.images || [],
@@ -304,15 +334,16 @@ export const updateResponse = async (req, res) => {
     }
 
     await response.save();
-    res.status(200).json({ 
-      message: 'प्रतिसाद यशस्वीरीत्या अपडेट झाला', 
-      data: response 
+    console.log('Response updated:', response._id); // Debug: Log updated response
+    res.status(200).json({
+      message: 'Response updated successfully',
+      data: response,
     });
   } catch (error) {
-    console.error('प्रतिसाद अपडेट करताना त्रुटी:', error.message, error.stack);
-    res.status(500).json({ 
-      message: 'प्रतिसाद अपडेट करताना त्रुटी', 
-      error: error.message 
+    console.error('Error updating response:', error.message, error.stack);
+    res.status(500).json({
+      message: 'Error updating response',
+      error: error.message,
     });
   }
 };

@@ -160,18 +160,34 @@ app.post("/api/auth/logout", (req, res) => {
   });
 });
 
-app.get("/api/auth/session", (req, res) => {
+app.get("/api/auth/session", async (req, res) => {
   console.log("Session Check Response:", {
     sessionExists: !!req.session,
     user: req.session?.user,
     isAuthenticated: req.session?.isAuthenticated,
   });
-  if (req.session?.user && req.session.isAuthenticated) {
-    return res.json({ isAuthenticated: true, user: req.session.user });
+  if (req.session) {
+    if (req.session.user && req.session.isAuthenticated) {
+      return res.json({ isAuthenticated: true, user: req.session.user });
+    }
+    // If user is undefined, try to repopulate from database using userId
+    if (req.session.userId) {
+      try {
+        const user = await User.findById(req.session.userId);
+        if (user) {
+          req.session.user = { id: user._id, mobile: user.mobile, name: user.name, branch: user.branch };
+          req.session.isAuthenticated = true;
+          return res.json({ isAuthenticated: true, user: req.session.user });
+        }
+      } catch (error) {
+        console.error("Error fetching user from session:", error);
+      }
+    }
+    res.json({ isAuthenticated: false });
+  } else {
+    res.json({ isAuthenticated: false });
   }
-  res.json({ isAuthenticated: false });
 });
-
 app.use("/api/form", authenticateToken, formRoutes);
 
 // Server start
