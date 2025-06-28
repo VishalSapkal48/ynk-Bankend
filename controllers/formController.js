@@ -7,17 +7,14 @@ const decodeUTF8 = (text) => {
   if (typeof text !== 'string') return text;
 
   try {
-    // Check if text is already in a recognizable Unicode range (e.g., Devanagari for Marathi)
     if (text.match(/^[\u0900-\u097F]+/)) {
       return text; // Assume it's already properly encoded Marathi
     }
-
-    // Attempt to decode if it might be escaped or encoded
     const decoded = decodeURIComponent(escape(text));
     return decoded;
   } catch (error) {
     console.warn('UTF-8 decode warning:', error.message, 'Original text:', text);
-    return text; // Return original if decoding fails
+    return text;
   }
 };
 
@@ -37,19 +34,6 @@ const cleanUTF8Object = (obj) => {
   }
   return obj;
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 export const submitForm = async (req, res) => {
   try {
@@ -108,18 +92,16 @@ export const submitForm = async (req, res) => {
       let isSubQuestion = false;
       let parentQuestionId = null;
 
-      console.log(`Processing question: ${decodedQuestionText}, Answer: ${answer}`); // Debug log
+      console.log(`Processing question: ${decodedQuestionText}, Answer: ${answer}`);
 
-      // Handle subquestions
       if (decodedQuestionText.includes(" - ")) {
         const [parentQuestionText, subQuestionText] = decodedQuestionText.split(" - ", 2).map(decodeUTF8);
         parentQuestionId = parentQuestionText.replace(/\s+/g, "_");
         const subQuestionId = `${parentQuestionId}_${decodeUTF8(subQuestionText).replace(/\s+/g, "_")}`;
         isSubQuestion = true;
 
-        console.log(`Detected subquestion - Parent: ${parentQuestionText}, Sub: ${subQuestionText}`); // Debug log
+        console.log(`Detected subquestion - Parent: ${parentQuestionText}, Sub: ${subQuestionText}`);
 
-        // Ensure parent question is processed if not already added
         if (!processedQuestions.has(parentQuestionId)) {
           const parentMediaKey = `media[${parentQuestionText}]`;
           if (req.files && Array.isArray(req.files) && req.files.some(f => f.fieldname === parentMediaKey)) {
@@ -155,7 +137,6 @@ export const submitForm = async (req, res) => {
           processedQuestions.add(parentQuestionId);
         }
 
-        // Process subquestion media
         const subMediaKey = `media[${questionText}]`;
         if (req.files && Array.isArray(req.files) && req.files.some(f => f.fieldname === subMediaKey)) {
           const files = req.files.filter(f => f.fieldname === subMediaKey);
@@ -182,14 +163,13 @@ export const submitForm = async (req, res) => {
         responses.push({
           questionId: subQuestionId,
           questionText: subQuestionText,
-          answer: decodeUTF8(answer), // Ensure answer is decoded for Marathi
+          answer: decodeUTF8(answer),
           images,
           videos,
           isSubQuestion: true,
           parentQuestionId,
         });
       } else {
-        // Handle main questions
         const mediaKey = `media[${questionText}]`;
         if (req.files && Array.isArray(req.files) && req.files.some(f => f.fieldname === mediaKey)) {
           const files = req.files.filter(f => f.fieldname === mediaKey);
@@ -261,8 +241,6 @@ export const submitForm = async (req, res) => {
   }
 };
 
-// [Keeping other exports (getResponses, deleteResponse, deleteUser, updateResponse) unchanged for now]
-
 export const getResponses = async (req, res) => {
   try {
     const { formId, language, mobile } = req.query;
@@ -288,7 +266,6 @@ export const getResponses = async (req, res) => {
       .populate('userId')
       .sort({ submittedAt: -1 });
 
-    // Log raw database response
     console.log('Raw Database Responses:', JSON.stringify(responses, null, 2));
 
     const cleanedResponses = responses.map((response) => {
@@ -300,7 +277,6 @@ export const getResponses = async (req, res) => {
           answer: decodeUTF8(resp.answer),
         })),
       };
-      // Log each cleaned response
       console.log('Cleaned Response:', JSON.stringify(cleaned, null, 2));
       return cleaned;
     });
@@ -315,19 +291,6 @@ export const getResponses = async (req, res) => {
     });
   }
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 export const deleteResponse = async (req, res) => {
   try {
@@ -361,7 +324,7 @@ export const deleteResponse = async (req, res) => {
     }
 
     await Response.deleteOne({ _id: id });
-    console.log('Response deleted:', id); // Debug: Log deletion
+    console.log('Response deleted:', id);
     res.status(200).json({ message: 'Response deleted successfully' });
   } catch (error) {
     console.error('Error deleting response:', error.message, error.stack);
@@ -405,7 +368,7 @@ export const deleteUser = async (req, res) => {
 
     await Response.deleteMany({ userId: id });
     await User.deleteOne({ _id: id });
-    console.log('User deleted:', id); // Debug: Log deletion
+    console.log('User deleted:', id);
     res.status(200).json({ message: 'User and associated responses deleted successfully' });
   } catch (error) {
     console.error('Error deleting user:', error.message, error.stack);
@@ -419,7 +382,7 @@ export const updateResponse = async (req, res) => {
     const cleanedBody = cleanUTF8Object(req.body);
     const { responses, language } = cleanedBody;
 
-    console.log('Update Request Body:', cleanedBody); // Debug: Log update request
+    console.log('Update Request Body:', cleanedBody);
 
     const response = await Response.findById(id);
     if (!response) {
@@ -444,7 +407,7 @@ export const updateResponse = async (req, res) => {
     }
 
     await response.save();
-    console.log('Response updated:', response._id); // Debug: Log updated response
+    console.log('Response updated:', response._id);
     res.status(200).json({
       message: 'Response updated successfully',
       data: response,

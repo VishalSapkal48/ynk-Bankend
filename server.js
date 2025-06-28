@@ -1,4 +1,3 @@
-
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -6,7 +5,7 @@ import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import connectDB from "./config/db.js";
 import formRoutes from "./routes/formRoutes.js";
-import cloudinary from "cloudinary";
+import cloudinary from "./config/cloudinary.js";
 import User from "./models/User.js";
 import session from "express-session";
 import MongoStore from "connect-mongo";
@@ -53,11 +52,12 @@ app.use(
     cookie: {
       maxAge: 1000 * 60 * 60, // 1 hour
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // false for local
-      sameSite: "lax", // Allow cross-site for dev
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
     },
   })
 );
+console.log("Session store initialized:", MongoStore.create({ mongoUrl: process.env.MONGO_URI }));
 
 // Authentication middleware with enhanced debugging
 const authenticateToken = (req, res, next) => {
@@ -68,13 +68,46 @@ const authenticateToken = (req, res, next) => {
     cookie: req.headers.cookie,
   });
   if (!req.session || !req.session.user || !req.session.isAuthenticated) {
-    return res.status(401).json({ message: "Access denied, no valid session", session: req.session });
+    return res.status(401).json({ message: "Access denied, no valid session" });
   }
   req.user = req.session.user;
   next();
 };
 
-// Routes
+// Add role-based middleware
+const authorizeRole = (role) => (req, res, next) => {
+  console.log("Role Check - User Role:", req.session.user.role, "Required Role:", role);
+  if (req.session.user.role !== role) {
+    return res.status(403).json({ message: "Access denied, insufficient permissions" });
+  }
+  next();
+};
+
+// Initial admin setup route (run once to create an admin user)
+app.post("/api/auth/setup-admin", async (req, res) => {
+  try {
+    const { mobile, password, name, branch } = req.body;
+    if (!mobile || !password || !name || !branch) {
+      return res.status(400).json({ message: "All fields (mobile, password, name, branch) are required" });
+    }
+
+    const existingAdmin = await User.findOne({ role: "admin" });
+    if (existingAdmin) {
+      return res.status(400).json({ message: "Admin already exists" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const adminUser = new User({ mobile, password: hashedPassword, name, branch, role: "admin" });
+    await adminUser.save();
+
+    res.status(201).json({ message: "Admin user created successfully", user: { id: adminUser._id, mobile, name, branch, role: "admin" } });
+  } catch (error) {
+    console.error("Error setting up admin:", error.message, error.stack);
+    res.status(500).json({ message: "Error creating admin user", error: error.message });
+  }
+});
+
+// Auth routes
 app.post("/api/auth/register", async (req, res) => {
   const { mobile, password, name, branch } = req.body;
   try {
@@ -85,7 +118,7 @@ app.post("/api/auth/register", async (req, res) => {
     const user = new User({ mobile, password: hashedPassword, name, branch });
     await user.save();
 
-    req.session.user = { id: user._id, mobile, name, branch };
+    req.session.user = { id: user._id, mobile, name, branch, role: user.role };
     req.session.isAuthenticated = true;
 
     res.status(201).json({ message: "User registered successfully", user: req.session.user });
@@ -102,12 +135,32 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(400).json({ message: "Invalid mobile number or password" });
     }
 
-    req.session.user = { id: user._id, mobile, name: user.name, branch: user.branch };
+    req.session.user = { id: user._id, mobile: user.mobile, name: user.name, branch: user.branch, role: user.role };
     req.session.isAuthenticated = true;
+    console.log("Login Successful - Session User:", req.session.user);
 
     res.json({ message: "Login successful", user: req.session.user });
   } catch (error) {
     res.status(500).json({ message: "Error logging in", error: error.message });
+  }
+});
+
+app.post("/api/auth/admin/add-user", authenticateToken, authorizeRole("admin"), async (req, res) => {
+  const { mobile, password, name, branch, role } = req.body;
+  try {
+    const existingUser = await User.findOne({ mobile });
+    if (existingUser) return res.status(400).json({ message: "User already exists" });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new User({ mobile, password: hashedPassword, name, branch, role: role || "user" });
+    await user.save();
+
+    req.session.user = { id: user._id, mobile, name, branch, role: user.role };
+    req.session.isAuthenticated = true;
+
+    res.status(201).json({ message: "User added successfully", user: req.session.user });
+  } catch (error) {
+    res.status(500).json({ message: "Error adding user", error: error.message });
   }
 });
 
@@ -120,7 +173,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     req.session.otp = { mobile, code: otp, expires: Date.now() + 5 * 60 * 1000 };
 
-    console.log(`OTP for ${mobile}: ${otp}`); // Replace with SMS service
+    console.log(`OTP for ${mobile}: ${otp}`);
     res.json({ message: "OTP sent" });
   } catch (error) {
     res.status(500).json({ message: "Error sending OTP", error: error.message });
@@ -170,12 +223,11 @@ app.get("/api/auth/session", async (req, res) => {
     if (req.session.user && req.session.isAuthenticated) {
       return res.json({ isAuthenticated: true, user: req.session.user });
     }
-    // If user is undefined, try to repopulate from database using userId
     if (req.session.userId) {
       try {
         const user = await User.findById(req.session.userId);
         if (user) {
-          req.session.user = { id: user._id, mobile: user.mobile, name: user.name, branch: user.branch };
+          req.session.user = { id: user._id, mobile: user.mobile, name: user.name, branch: user.branch, role: user.role };
           req.session.isAuthenticated = true;
           return res.json({ isAuthenticated: true, user: req.session.user });
         }
@@ -188,6 +240,7 @@ app.get("/api/auth/session", async (req, res) => {
     res.json({ isAuthenticated: false });
   }
 });
+
 app.use("/api/form", authenticateToken, formRoutes);
 
 // Server start
